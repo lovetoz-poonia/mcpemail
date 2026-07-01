@@ -26,6 +26,17 @@ const getCategoryColor = (analysis: Analysis | null | undefined) => {
   return 'bg-slate-50 text-slate-600 border-slate-200/80';
 };
 
+const renderWithBold = (text: string) => {
+  const parts = text.split(/(\*\*.*?\*\*)/g);
+  return parts.map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={index} className="font-extrabold text-indigo-900 bg-indigo-50/50 px-1 rounded-sm">{part.slice(2, -2)}</strong>;
+    }
+    return <span key={index}>{part}</span>;
+  });
+};
+
+
 export default function SupportDesk() {
   const [mode, setMode] = useState<"staging" | "live">("live");
   const [emails, setEmails] = useState<Email[]>([]);
@@ -35,6 +46,8 @@ export default function SupportDesk() {
   const [analysisMap, setAnalysisMap] = useState<Record<string, Analysis | null>>({});
   const [analyzingMap, setAnalyzingMap] = useState<Record<string, boolean>>({});
   const [sendingState, setSendingState] = useState<Record<string, boolean>>({});
+  const [sendingSummaryState, setSendingSummaryState] = useState<Record<string, boolean>>({});
+  const [isSendingGlobalSummary, setIsSendingGlobalSummary] = useState(false);
   const [draftContentMap, setDraftContentMap] = useState<Record<string, string>>({});
   const [isRefiningMap, setIsRefiningMap] = useState<Record<string, boolean>>({});
   
@@ -213,6 +226,98 @@ export default function SupportDesk() {
     }
   };
 
+  const handleSendSummary = async () => {
+    if (!selectedEmail || !currentAnalysis) return;
+    setSendingSummaryState(prev => ({ ...prev, [selectedEmail.id]: true }));
+    try {
+      const summaryBody = `
+Support Desk - Email Summary Report
+-----------------------------------
+From: ${selectedEmail.name} <${selectedEmail.sender}>
+Subject: ${selectedEmail.subject}
+Category: ${currentAnalysis.category}
+Sentiment: ${currentAnalysis.sentiment}
+
+Key Points:
+${currentAnalysis.extractedDetails.map(d => `- ${d.replace(/\*\*/g, '')}`).join('\n')}
+
+Recommended Action:
+${currentAnalysis.recommendedAction}
+      `.trim();
+
+      const res = await fetch("/api/send-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: "lovetoz.poonia@abstractlayers.com",
+          subject: `Summary Report: ${selectedEmail.subject}`,
+          body: summaryBody,
+          mode
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showToast("Summary sent to stakeholder successfully!", "success");
+      } else {
+        showToast("Failed to send summary: " + (data.error || data.details || "Unknown error"), "error");
+      }
+    } catch (e) {
+      console.error(e);
+      showToast("Error sending summary.", "error");
+    } finally {
+      setSendingSummaryState(prev => ({ ...prev, [selectedEmail.id]: false }));
+    }
+  };
+
+  const handleSendGlobalSummary = async () => {
+    setIsSendingGlobalSummary(true);
+    try {
+      const analyzedEmails = filteredEmails.filter(e => analysisMap[e.id]);
+      
+      if (analyzedEmails.length === 0) {
+        showToast("No analyzed emails to summarize in the current view.", "info");
+        return;
+      }
+
+      let summaryBody = `Support Desk - Global Email Summary Report\n`;
+      summaryBody += `==========================================\n\n`;
+      summaryBody += `Total Emails Analyzed: ${analyzedEmails.length}\n\n`;
+
+      analyzedEmails.forEach((email, index) => {
+        const analysis = analysisMap[email.id]!;
+        summaryBody += `Email ${index + 1}: ${email.subject}\n`;
+        summaryBody += `From: ${email.name} <${email.sender}>\n`;
+        summaryBody += `Category: ${analysis.category} | Sentiment: ${analysis.sentiment}\n`;
+        summaryBody += `Key Points:\n${analysis.extractedDetails.map(d => `- ${d.replace(/\*\*/g, '')}`).join('\n')}\n`;
+        summaryBody += `Recommended Action: ${analysis.recommendedAction}\n`;
+        summaryBody += `--------------------------------------------------\n\n`;
+      });
+
+      const res = await fetch("/api/send-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: "lovetoz.poonia@abstractlayers.com",
+          subject: `Global Support Desk Report (${analyzedEmails.length} emails)`,
+          body: summaryBody.trim(),
+          mode
+        })
+      });
+      
+      const data = await res.json();
+      if (res.ok) {
+        showToast("Global summary report sent to stakeholder successfully!", "success");
+      } else {
+        showToast("Failed to send report: " + (data.error || data.details || "Unknown error"), "error");
+      }
+    } catch (e) {
+      console.error(e);
+      showToast("Error sending report.", "error");
+    } finally {
+      setIsSendingGlobalSummary(false);
+    }
+  };
+
   const runAutoPilot = () => {
     autoAnalyzeEmails(emails, true);
   };
@@ -231,6 +336,7 @@ export default function SupportDesk() {
   const currentAnalysis = selectedEmail ? analysisMap[selectedEmail.id] : null;
   const isAnalyzing = selectedEmail ? analyzingMap[selectedEmail.id] : false;
   const isSending = selectedEmail ? sendingState[selectedEmail.id] : false;
+  const isSendingSummary = selectedEmail ? sendingSummaryState[selectedEmail.id] : false;
   const isRefining = selectedEmail ? isRefiningMap[selectedEmail.id] : false;
   const currentDraft = selectedEmail ? (draftContentMap[selectedEmail.id] || currentAnalysis?.draftedReply || "").replace(/\\n/g, '\n') : "";
 
@@ -429,6 +535,15 @@ export default function SupportDesk() {
                   {isAutoPiloting ? `Analyzing (${autoPilotProgress.current}/${autoPilotProgress.total})` : "Auto-Analyze Inbox"}
                 </button>
 
+                <button 
+                  onClick={handleSendGlobalSummary}
+                  disabled={isSendingGlobalSummary || filteredEmails.length === 0}
+                  className="flex items-center gap-2 text-[13px] font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-5 py-2.5 rounded-xl transition-all disabled:opacity-50 shadow-sm border border-indigo-100 ml-2"
+                >
+                  {isSendingGlobalSummary ? <RefreshCw className="w-4 h-4 animate-spin"/> : <Send className="w-4 h-4"/>}
+                  Share Report
+                </button>
+
                 <div className="flex-1"></div>
                 <span className="text-[13px] font-extrabold text-zinc-500">1-{filteredEmails.length} of {filteredEmails.length}</span>
                 <button className="p-2.5 bg-white hover:bg-zinc-50 border border-white rounded-xl transition text-zinc-700 shadow-[0_2px_8px_rgba(0,0,0,0.04)]"><ChevronLeft className="w-4 h-4"/></button>
@@ -564,12 +679,22 @@ export default function SupportDesk() {
                       <div className="bg-white border border-white rounded-[20px] p-6 shadow-[0_4px_20px_rgba(0,0,0,0.04)] space-y-5">
                         {currentAnalysis.extractedDetails && currentAnalysis.extractedDetails.length > 0 && (
                           <div className="flex flex-col gap-3">
-                            <h4 className="text-[10px] font-extrabold text-indigo-500/80 uppercase tracking-widest">Key Points Summary</h4>
+                            <h4 className="text-[10px] font-extrabold text-indigo-500/80 uppercase tracking-widest flex items-center justify-between">
+                              <span>Key Points Summary</span>
+                              <button 
+                                onClick={handleSendSummary} 
+                                disabled={isSendingSummary}
+                                className="flex items-center gap-1 text-[9px] bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2 py-1 rounded-md transition disabled:opacity-50"
+                              >
+                                {isSendingSummary ? <RefreshCw className="w-3 h-3 animate-spin"/> : <Send className="w-3 h-3"/>} 
+                                Forward to Stakeholder
+                              </button>
+                            </h4>
                             <ul className="text-[14px] text-zinc-800 space-y-3 font-medium">
                               {currentAnalysis.extractedDetails.map((detail, idx) => (
                                 <li key={idx} className="flex gap-3 items-start leading-snug">
                                   <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 mt-1.5 shrink-0 shadow-sm"></div>
-                                  <span>{detail}</span>
+                                  <span className="flex-1">{renderWithBold(detail)}</span>
                                 </li>
                               ))}
                             </ul>

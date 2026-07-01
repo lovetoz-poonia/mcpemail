@@ -9,7 +9,7 @@ const analysisSchema = z.object({
   category: z.string().describe("Categorize this email (e.g., 'Good Feedback', 'Complaint', 'Refund Request', 'General Inquiry')."),
   confidenceScore: z.number().min(0).max(100).describe("How confident the model is in this analysis (0-100)."),
   recommendedAction: z.string().describe("A brief, one sentence recommendation for what the human or system should do next."),
-  extractedDetails: z.array(z.string()).describe("A list of 3-5 bullet points extracting the most critical facts, numbers, or statements from the email."),
+  extractedDetails: z.array(z.string()).describe("A list of 3-5 bullet points extracting the most critical facts, numbers, or statements from the email. Wrap important entities like dates, names, IDs, amounts, core concerns, and strong sentiment/emotion words in markdown bold (**text**)."),
   draftedReply: z.string().describe("A professional drafted reply. You MUST format this string with actual newline characters (\\n\\n) to separate paragraphs. For example: 'Dear [Name],\\n\\nBody paragraph.\\n\\nSincerely,\\nCustomer Support Team'")
 });
 
