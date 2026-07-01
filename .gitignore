@@ -39,3 +39,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Agent scratch/debug files
+brain/
+*.backup
+test-*.js
+debug-*.json
+*.keys.json
+
