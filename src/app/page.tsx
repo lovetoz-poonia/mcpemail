@@ -17,13 +17,13 @@ type Analysis = {
 };
 
 const getCategoryColor = (analysis: Analysis | null | undefined) => {
-  if (!analysis) return 'bg-slate-50 text-slate-600 border border-slate-200/80';
+  if (!analysis) return 'bg-transparent text-slate-600 border border-slate-300';
   const category = analysis.category.toUpperCase();
-  if (category.includes('COMPLAINT') && !category.includes('FOLLOW')) return 'bg-rose-50 text-rose-700 border border-rose-200';
-  if (category.includes('FOLLOW')) return 'bg-emerald-50 text-emerald-700 border border-emerald-200';
-  if (category.includes('FEEDBACK') || analysis.sentiment === 'Positive') return 'bg-blue-50 text-blue-700 border border-blue-200';
-  if (analysis.sentiment === 'Negative') return 'bg-rose-50 text-rose-700 border border-rose-200';
-  return 'bg-indigo-50 text-indigo-700 border border-indigo-200';
+  if (category.includes('COMPLAINT') && !category.includes('FOLLOW')) return 'bg-transparent text-rose-600 border border-rose-300';
+  if (category.includes('FOLLOW')) return 'bg-transparent text-emerald-600 border border-emerald-300';
+  if (category.includes('FEEDBACK') || analysis.sentiment === 'Positive') return 'bg-transparent text-blue-600 border border-blue-300';
+  if (analysis.sentiment === 'Negative') return 'bg-transparent text-rose-600 border border-rose-300';
+  return 'bg-transparent text-indigo-600 border border-indigo-300';
 };
 
 const renderWithBold = (text: string) => {
@@ -709,13 +709,13 @@ ${analysis.recommendedAction}`;
                           <span className="font-extrabold text-zinc-900 mr-3 truncate tracking-tight text-[15px]">{email.subject}</span>
                           {analysisMap[email.id] && (
                             <div className="flex items-center gap-2 shrink-0 ml-auto">
-                              <span className={`px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-widest shadow-sm ${getCategoryColor(analysisMap[email.id])}`}>
-                                {analysisMap[email.id]?.category}
+                              <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold capitalize ${getCategoryColor(analysisMap[email.id])}`}>
+                                {analysisMap[email.id]?.category.toLowerCase()}
                               </span>
                               {analysisMap[email.id]?.priority && (
-                                <span className={`px-2.5 py-1 rounded-md text-[10px] font-bold uppercase flex items-center gap-1.5 shrink-0 tracking-widest shadow-sm ${analysisMap[email.id]?.priority === 'High' ? 'bg-red-50 text-red-700 border border-red-200' : analysisMap[email.id]?.priority === 'Medium' ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-cyan-50 text-cyan-700 border border-cyan-200'}`}>
-                                  <Flag className={`w-3 h-3 ${analysisMap[email.id]?.priority === 'High' ? 'text-red-500 fill-red-500' : analysisMap[email.id]?.priority === 'Medium' ? 'text-amber-500 fill-amber-500' : 'text-cyan-500 fill-cyan-500'}`} />
-                                  {analysisMap[email.id]?.priority} Priority
+                                <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold flex items-center gap-1.5 shrink-0 bg-transparent text-zinc-800 ${analysisMap[email.id]?.priority === 'High' ? 'border border-red-400/80' : analysisMap[email.id]?.priority === 'Medium' ? 'border border-amber-500/80' : 'border border-green-500/80'}`}>
+                                  <Flag className={`w-3 h-3 ${analysisMap[email.id]?.priority === 'High' ? 'text-red-500 fill-red-500' : analysisMap[email.id]?.priority === 'Medium' ? 'text-amber-500 fill-amber-500' : 'text-green-500 fill-green-500'}`} />
+                                  {analysisMap[email.id]?.priority} priority
                                 </span>
                               )}
                             </div>
@@ -802,10 +802,13 @@ ${analysis.recommendedAction}`;
 
                         {/* Tags */}
                         <div className="flex gap-2">
-                          <span className={`px-2.5 py-1 rounded-md text-[10px] font-extrabold uppercase tracking-widest border shrink-0 ${currentAnalysis.sentiment === 'Positive' ? 'bg-emerald-50/80 text-emerald-700 border-emerald-200/50' : currentAnalysis.sentiment === 'Negative' ? 'bg-rose-50/80 text-rose-700 border-rose-200/50' : 'bg-white/50 text-zinc-700 border-white/50'}`}>{currentAnalysis.sentiment}</span>
-                          <span className={`px-2.5 py-1 rounded-md text-[10px] font-extrabold uppercase tracking-widest truncate max-w-[200px] border ${currentAnalysis.sentiment === 'Negative' ? 'bg-rose-50/80 text-rose-700 border-rose-200/50' : 'bg-white/50 border-white/50 text-zinc-700'}`}>{currentAnalysis.category}</span>
+                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold capitalize border shrink-0 ${currentAnalysis.sentiment === 'Positive' ? 'bg-transparent text-emerald-600 border-emerald-300' : currentAnalysis.sentiment === 'Negative' ? 'bg-transparent text-rose-600 border-rose-300' : 'bg-transparent text-zinc-600 border-zinc-300'}`}>{currentAnalysis.sentiment.toLowerCase()}</span>
+                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold capitalize truncate max-w-[200px] ${getCategoryColor(currentAnalysis)}`}>{currentAnalysis.category.toLowerCase()}</span>
                           {currentAnalysis.priority && (
-                            <span className={`px-2.5 py-1 rounded-md text-[10px] font-extrabold uppercase tracking-widest border shrink-0 ${currentAnalysis.priority === 'High' ? 'bg-red-500 text-white border-red-600' : currentAnalysis.priority === 'Medium' ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-zinc-100 text-zinc-600 border-zinc-200'}`}>{currentAnalysis.priority} Priority</span>
+                            <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold flex items-center gap-1.5 shrink-0 bg-transparent text-zinc-800 ${currentAnalysis.priority === 'High' ? 'border border-red-400/80' : currentAnalysis.priority === 'Medium' ? 'border border-amber-500/80' : 'border border-green-500/80'}`}>
+                              <Flag className={`w-3 h-3 ${currentAnalysis.priority === 'High' ? 'text-red-500 fill-red-500' : currentAnalysis.priority === 'Medium' ? 'text-amber-500 fill-amber-500' : 'text-green-500 fill-green-500'}`} />
+                              {currentAnalysis.priority} priority
+                            </span>
                           )}
                         </div>
 
