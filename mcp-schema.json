@@ -1,0 +1,79 @@
+{
+  "name": "send_email",
+  "description": "Sends a new email",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "to": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "format": "email"
+        },
+        "minItems": 1,
+        "description": "List of recipient email addresses"
+      },
+      "subject": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Email subject"
+      },
+      "body": {
+        "type": "string",
+        "description": "Email body content (used for text/plain or when htmlBody not provided)"
+      },
+      "htmlBody": {
+        "type": "string",
+        "description": "HTML version of the email body"
+      },
+      "mimeType": {
+        "type": "string",
+        "enum": [
+          "text/plain",
+          "text/html",
+          "multipart/alternative"
+        ],
+        "default": "text/plain",
+        "description": "Email content type"
+      },
+      "cc": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "format": "email"
+        },
+        "description": "List of CC recipients"
+      },
+      "bcc": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "format": "email"
+        },
+        "description": "List of BCC recipients"
+      },
+      "threadId": {
+        "type": "string",
+        "description": "Thread ID to reply to"
+      },
+      "inReplyTo": {
+        "type": "string",
+        "description": "Message ID being replied to"
+      },
+      "attachments": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "List of file paths to attach to the email"
+      }
+    },
+    "required": [
+      "to",
+      "subject",
+      "body"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

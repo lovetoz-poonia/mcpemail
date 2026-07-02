@@ -52,15 +52,20 @@ export async function POST(req: NextRequest) {
         to: cleanTo,
         subject: subject,
         body: "\r\n" + body,
-        ...(threadId ? { threadId } : {})
+        ...(threadId ? { inReplyTo: threadId } : {})
       }
     });
+
+    const resultText = (result.content as any)?.[0]?.text || "";
+    if (resultText.toLowerCase().includes("error")) {
+      throw new Error(`MCP Tool returned an error: ${resultText}`);
+    }
 
     return NextResponse.json({ success: true, result: result.content });
 
   } catch (error: any) {
     console.error("MCP Send Error:", error);
-    return NextResponse.json({ 
+    return NextResponse.json({
       error: "Failed to send email via MCP. Ensure 'gcp-oauth.keys.json' is present in the project root.",
       details: error.message
     }, { status: 500 });
