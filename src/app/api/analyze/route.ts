@@ -7,6 +7,7 @@ export const maxDuration = 60;
 const analysisSchema = z.object({
   sentiment: z.enum(["Positive", "Negative", "Neutral"]).describe("The overall sentiment of the email tone."),
   category: z.string().describe("Categorize this email (e.g., 'Good Feedback', 'Complaint', 'Refund Request', 'General Inquiry')."),
+  priority: z.enum(["High", "Medium", "Low"]).describe("The priority or severity of the email based on customer sentiment, urgency, or issue type."),
   confidenceScore: z.number().min(0).max(100).describe("How confident the model is in this analysis (0-100)."),
   recommendedAction: z.string().describe("A brief, one sentence recommendation for what the human or system should do next."),
   extractedDetails: z.array(z.string()).describe("A list of 3-5 bullet points extracting the most critical facts, numbers, or statements from the email. Wrap important entities like dates, names, IDs, amounts, core concerns, and strong sentiment/emotion words in markdown bold (**text**)."),
