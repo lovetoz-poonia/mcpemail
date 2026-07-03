@@ -67,7 +67,10 @@ const getTATInfo = (receivedTimestamp?: number) => {
   return { label, isBreached };
 };
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8085";
+
 export default function SupportDesk() {
+  const [userId, setUserId] = useState<string | null>(null);
   const [mode, setMode] = useState<"staging" | "live">("live");
   const [emails, setEmails] = useState<Email[]>([]);
   const [loadingEmails, setLoadingEmails] = useState(false);
@@ -87,6 +90,34 @@ export default function SupportDesk() {
 
   const [toast, setToast] = useState<{ message: string, type: "success" | "error" | "info" } | null>(null);
   const [emailFilter, setEmailFilter] = useState<"ALL" | "GOOD" | "BAD" | "SUPPORT" | "FOLLOWUP">("ALL");
+
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlUserId = urlParams.get('userId');
+    if (urlUserId) {
+      localStorage.setItem('userId', urlUserId);
+      setUserId(urlUserId);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else {
+      const storedUserId = localStorage.getItem('userId');
+      if (storedUserId) {
+        setUserId(storedUserId);
+      }
+    }
+  }, []);
+
+  const handleLogin = async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/auth/url`);
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      }
+    } catch (e) {
+      console.error(e);
+      showToast("Failed to initiate login.", "error");
+    }
+  };
 
   const showToast = (message: string, type: "success" | "error" | "info" = "info") => {
     setToast({ message, type });
@@ -126,9 +157,9 @@ ${analysis.extractedDetails.map(d => `• ${d.replace(/\*\*/g, '')}`).join('\n')
 ${analysis.recommendedAction}
       `.trim();
 
-      await fetch("http://localhost:8085/api/send-email", {
+      await fetch(`${API_URL}/api/send-email`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-User-Id": userId || "" },
         body: JSON.stringify({
           to: "gaurav.p@abstractlayers.com",
           subject: `Summary Report: ${email.subject}`,
@@ -143,9 +174,9 @@ ${analysis.recommendedAction}
 
   const logTransaction = async (email: Email, analysis: Analysis) => {
     try {
-      await fetch("http://localhost:8085/api/transactions", {
+      await fetch(`${API_URL}/api/transactions`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-User-Id": userId || "" },
         body: JSON.stringify({
           id: email.id,
           threadId: email.threadId || email.id,
@@ -191,9 +222,9 @@ ${analysis.recommendedAction}
       try {
         setAnalyzingMap(prev => ({ ...prev, [email.id]: true }));
         const emailContext = `From: ${email.name} <${email.sender}>\nSubject: ${email.subject}\n\n${email.content}`;
-        const analyzeRes = await fetch("http://localhost:8085/api/analyze", {
+        const analyzeRes = await fetch(`${API_URL}/api/analyze`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "X-User-Id": userId || "" },
           body: JSON.stringify({ emailContext })
         });
         if (!analyzeRes.ok) continue;
@@ -236,9 +267,9 @@ ${analysis.recommendedAction}`;
 
       summaryBody += emailBlocks.join('\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n');
 
-      fetch("http://localhost:8085/api/send-email", {
+      fetch(`${API_URL}/api/send-email`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-User-Id": userId || "" },
         body: JSON.stringify({
           to: "gaurav.p@abstractlayers.com",
           subject: `Automated Sync Report (${newlyAnalyzed.length} new emails)`,
@@ -252,9 +283,9 @@ ${analysis.recommendedAction}`;
   const fetchEmails = async () => {
     setLoadingEmails(true);
     try {
-      const res = await fetch("http://localhost:8085/api/fetch-emails", {
+      const res = await fetch(`${API_URL}/api/fetch-emails`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-User-Id": userId || "" },
         body: JSON.stringify({ mode })
       });
       const data = await res.json();
@@ -276,10 +307,11 @@ ${analysis.recommendedAction}`;
   useEffect(() => {
     // We intentionally ignore dependency warnings here as fetchEmails relies on state
     // that doesn't need to trigger re-renders infinitely.
+    if (!userId) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchEmails();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode]);
+  }, [mode, userId]);
 
   const handleSelectEmail = async (email: Email) => {
     setSelectedEmail(email);
@@ -292,9 +324,9 @@ ${analysis.recommendedAction}`;
     setAnalyzingMap(prev => ({ ...prev, [email.id]: true }));
     try {
       const emailContext = `From: ${email.name} <${email.sender}>\nSubject: ${email.subject}\n\n${email.content}`;
-      const res = await fetch("http://localhost:8085/api/analyze", {
+      const res = await fetch(`${API_URL}/api/analyze`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-User-Id": userId || "" },
         body: JSON.stringify({ emailContext })
       });
       const analysis: Analysis = await res.json();
@@ -320,9 +352,9 @@ ${analysis.recommendedAction}`;
     const currentDraft = draftContentMap[selectedEmail.id] || currentAnalysis.draftedReply;
     setIsRefiningMap(prev => ({ ...prev, [selectedEmail.id]: true }));
     try {
-      const res = await fetch("http://localhost:8085/api/refine-draft", {
+      const res = await fetch(`${API_URL}/api/refine-draft`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-User-Id": userId || "" },
         body: JSON.stringify({
           emailContext: selectedEmail.content,
           currentDraft: currentDraft,
@@ -348,9 +380,9 @@ ${analysis.recommendedAction}`;
     if (!selectedEmail || !currentAnalysis) return;
     setSendingState(prev => ({ ...prev, [selectedEmail.id]: true }));
     try {
-      const res = await fetch("http://localhost:8085/api/send-email", {
+      const res = await fetch(`${API_URL}/api/send-email`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-User-Id": userId || "" },
         body: JSON.stringify({
           to: selectedEmail.sender,
           subject: `Re: ${selectedEmail.subject}`,
@@ -364,9 +396,9 @@ ${analysis.recommendedAction}`;
         showToast("Email sent successfully!", "success");
         
         const tatSeconds = tatStartMap[selectedEmail.id] ? Math.floor((Date.now() - tatStartMap[selectedEmail.id]) / 1000) : 0;
-        fetch("http://localhost:8085/api/transactions", {
+        fetch(`${API_URL}/api/transactions`, {
           method: "PUT",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "X-User-Id": userId || "" },
           body: JSON.stringify({
             id: selectedEmail.id,
             replied_time: new Date().toISOString(),
@@ -406,9 +438,9 @@ ${currentAnalysis.extractedDetails.map(d => `• ${d.replace(/\*\*/g, '')}`).joi
 ${currentAnalysis.recommendedAction}
       `.trim();
 
-      const res = await fetch("http://localhost:8085/api/send-email", {
+      const res = await fetch(`${API_URL}/api/send-email`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-User-Id": userId || "" },
         body: JSON.stringify({
           to: "gaurav.p@abstractlayers.com",
           subject: `Summary Report: ${selectedEmail.subject}`,
@@ -461,9 +493,9 @@ ${analysis.recommendedAction}`;
 
       summaryBody += emailBlocks.join('\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n');
 
-      const res = await fetch("http://localhost:8085/api/send-email", {
+      const res = await fetch(`${API_URL}/api/send-email`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-User-Id": userId || "" },
         body: JSON.stringify({
           to: "gaurav.p@abstractlayers.com",
           subject: `Global Support Desk Report (${analyzedEmails.length} emails)`,
@@ -623,6 +655,22 @@ ${analysis.recommendedAction}`;
 
     return <div className="space-y-0.5">{elements}</div>;
   };
+
+  if (!userId) {
+    return (
+      <div className="h-screen w-screen flex flex-col items-center justify-center bg-gradient-to-br from-indigo-100 via-purple-50 to-teal-100 font-sans selection:bg-zinc-200 selection:text-zinc-900 text-zinc-900 relative p-4">
+        <div className="bg-white/70 backdrop-blur-3xl rounded-[2rem] shadow-[0_16px_60px_rgba(0,0,0,0.1)] border border-white p-12 max-w-md w-full text-center flex flex-col items-center">
+          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 text-white flex items-center justify-center shadow-md shadow-indigo-500/20 mb-6"><Mail className="w-8 h-8" /></div>
+          <h1 className="text-2xl font-extrabold tracking-tight mb-2">AL Support Desk</h1>
+          <p className="text-zinc-500 font-medium mb-8">Sign in to connect your Gmail account and access the AI Support Desk.</p>
+          <button onClick={handleLogin} className="flex items-center gap-3 px-6 py-3 bg-white border border-zinc-200 rounded-xl hover:bg-zinc-50 transition shadow-sm font-bold text-zinc-700">
+            <svg viewBox="0 0 24 24" className="w-5 h-5"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" /><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" /><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" /><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" /></svg>
+            Sign in with Google
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-[#F4F5F7] font-sans selection:bg-zinc-200 selection:text-zinc-900 text-zinc-900 relative p-4 lg:p-6">
