@@ -5,12 +5,13 @@ import {
   Menu, Search, Settings, Grid, Mail, Inbox,
   AlertCircle, CheckCircle2, RefreshCw, Send, Sparkles,
   Info, Pen, ChevronLeft, ChevronRight, Archive,
-  Trash2, Clock, Star, ArrowLeft, MoreVertical, File, Flag
+  Trash2, Clock, Star, ArrowLeft, MoreVertical, File, Flag,
+  ThumbsUp, ThumbsDown, Headphones, Reply
 } from "lucide-react";
 
 // Types
 type Email = {
-  id: string; sender: string; name: string; subject: string; time: string; content: string;
+  id: string; threadId?: string; sender: string; name: string; subject: string; time: string; content: string; receivedTimestamp?: number; isFollowUp?: boolean;
 };
 type Analysis = {
   sentiment: "Positive" | "Negative" | "Neutral"; category: string; priority: "High" | "Medium" | "Low"; confidenceScore: number; recommendedAction: string; extractedDetails: string[]; draftedReply: string;
@@ -27,15 +28,44 @@ const getCategoryColor = (analysis: Analysis | null | undefined) => {
 };
 
 const renderWithBold = (text: string) => {
-  const parts = text.split(/(\*\*.*?\*\*)/g);
-  return parts.map((part, index) => {
-    if (part.startsWith('**') && part.endsWith('**')) {
-      return <strong key={index} className="font-extrabold text-indigo-900 bg-indigo-50/50 px-1 rounded-sm">{part.slice(2, -2)}</strong>;
-    }
-    return <span key={index}>{part}</span>;
-  });
+  if (text.includes('**')) {
+    const parts = text.split(/(\*\*.*?\*\*)/g);
+    return parts.map((part, index) => {
+      if (part.startsWith('**') && part.endsWith('**')) {
+        return <strong key={index} className="font-extrabold text-indigo-900 bg-indigo-50/50 px-1 rounded-sm">{part.slice(2, -2)}</strong>;
+      }
+      return <span key={index}>{part}</span>;
+    });
+  }
+  
+  if (text.includes(':')) {
+    const firstColonIdx = text.indexOf(':');
+    const key = text.substring(0, firstColonIdx + 1);
+    const val = text.substring(firstColonIdx + 1);
+    return (
+      <>
+        <strong className="font-extrabold text-indigo-900 bg-indigo-50/50 px-1 rounded-sm">{key}</strong>
+        <span>{val}</span>
+      </>
+    );
+  }
+  
+  return <span>{text}</span>;
 };
 
+const getTATInfo = (receivedTimestamp?: number) => {
+  if (!receivedTimestamp) return null;
+  const elapsedMs = Date.now() - receivedTimestamp;
+  const hours = Math.floor(elapsedMs / (1000 * 60 * 60));
+  const minutes = Math.floor((elapsedMs % (1000 * 60 * 60)) / (1000 * 60));
+  const isBreached = hours >= 4;
+  
+  let label = '';
+  if (hours > 0) label += `${hours}h `;
+  label += `${minutes}m`;
+  
+  return { label, isBreached };
+};
 
 export default function SupportDesk() {
   const [mode, setMode] = useState<"staging" | "live">("live");
@@ -56,11 +86,25 @@ export default function SupportDesk() {
   const [autoPilotProgress, setAutoPilotProgress] = useState({ current: 0, total: 0 });
 
   const [toast, setToast] = useState<{ message: string, type: "success" | "error" | "info" } | null>(null);
-  const [emailFilter, setEmailFilter] = useState<"ALL" | "GOOD" | "BAD" | "SUPPORT">("ALL");
+  const [emailFilter, setEmailFilter] = useState<"ALL" | "GOOD" | "BAD" | "SUPPORT" | "FOLLOWUP">("ALL");
 
   const showToast = (message: string, type: "success" | "error" | "info" = "info") => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
+  };
+
+  const formatDisplayTime = (timestamp?: number, fallback?: string) => {
+    if (!timestamp) return fallback;
+    const date = new Date(timestamp);
+    const today = new Date();
+    const isToday = date.getDate() === today.getDate() &&
+      date.getMonth() === today.getMonth() &&
+      date.getFullYear() === today.getFullYear();
+    if (isToday) {
+      return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    } else {
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    }
   };
 
   const sendSummaryToStakeholder = async (email: Email, analysis: Analysis) => {
@@ -82,7 +126,7 @@ ${analysis.extractedDetails.map(d => `• ${d.replace(/\*\*/g, '')}`).join('\n')
 ${analysis.recommendedAction}
       `.trim();
 
-      await fetch("/api/send-email", {
+      await fetch("http://localhost:8085/api/send-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -99,19 +143,21 @@ ${analysis.recommendedAction}
 
   const logTransaction = async (email: Email, analysis: Analysis) => {
     try {
-      await fetch("/api/transactions", {
+      await fetch("http://localhost:8085/api/transactions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id: email.id,
-          thread_id: email.id,
+          threadId: email.threadId || email.id,
           sender: email.sender,
           subject: email.subject,
           category: analysis.category,
           sentiment: analysis.sentiment,
           priority: analysis.priority,
-          received_time: email.time,
-          status: "ANALYZED"
+          receivedTime: email.time,
+          repliedTime: new Date().toLocaleString(),
+          tatSeconds: email.receivedTimestamp ? Math.floor((Date.now() - email.receivedTimestamp) / 1000) : 0,
+          status: "REPLIED"
         })
       });
     } catch (e) {
@@ -145,7 +191,7 @@ ${analysis.recommendedAction}
       try {
         setAnalyzingMap(prev => ({ ...prev, [email.id]: true }));
         const emailContext = `From: ${email.name} <${email.sender}>\nSubject: ${email.subject}\n\n${email.content}`;
-        const analyzeRes = await fetch("/api/analyze", {
+        const analyzeRes = await fetch("http://localhost:8085/api/analyze", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ emailContext })
@@ -190,7 +236,7 @@ ${analysis.recommendedAction}`;
 
       summaryBody += emailBlocks.join('\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n');
 
-      fetch("/api/send-email", {
+      fetch("http://localhost:8085/api/send-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -206,7 +252,7 @@ ${analysis.recommendedAction}`;
   const fetchEmails = async () => {
     setLoadingEmails(true);
     try {
-      const res = await fetch("/api/fetch-emails", {
+      const res = await fetch("http://localhost:8085/api/fetch-emails", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode })
@@ -246,7 +292,7 @@ ${analysis.recommendedAction}`;
     setAnalyzingMap(prev => ({ ...prev, [email.id]: true }));
     try {
       const emailContext = `From: ${email.name} <${email.sender}>\nSubject: ${email.subject}\n\n${email.content}`;
-      const res = await fetch("/api/analyze", {
+      const res = await fetch("http://localhost:8085/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ emailContext })
@@ -274,19 +320,19 @@ ${analysis.recommendedAction}`;
     const currentDraft = draftContentMap[selectedEmail.id] || currentAnalysis.draftedReply;
     setIsRefiningMap(prev => ({ ...prev, [selectedEmail.id]: true }));
     try {
-      const res = await fetch("/api/refine-draft", {
+      const res = await fetch("http://localhost:8085/api/refine-draft", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          originalEmail: selectedEmail.content,
+          emailContext: selectedEmail.content,
           currentDraft: currentDraft,
-          tone: tone
+          action: tone
         })
       });
       const data = await res.json();
-      if (res.ok && data.draft) {
+      if (res.ok && data.refinedDraft) {
         showToast("Draft updated successfully!", "success");
-        setDraftContentMap(prev => ({ ...prev, [selectedEmail.id]: data.draft }));
+        setDraftContentMap(prev => ({ ...prev, [selectedEmail.id]: data.refinedDraft }));
       } else {
         showToast("Failed to refine tone.", "error");
       }
@@ -302,7 +348,7 @@ ${analysis.recommendedAction}`;
     if (!selectedEmail || !currentAnalysis) return;
     setSendingState(prev => ({ ...prev, [selectedEmail.id]: true }));
     try {
-      const res = await fetch("/api/send-email", {
+      const res = await fetch("http://localhost:8085/api/send-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -318,7 +364,7 @@ ${analysis.recommendedAction}`;
         showToast("Email sent successfully!", "success");
         
         const tatSeconds = tatStartMap[selectedEmail.id] ? Math.floor((Date.now() - tatStartMap[selectedEmail.id]) / 1000) : 0;
-        fetch("/api/transactions", {
+        fetch("http://localhost:8085/api/transactions", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -360,7 +406,7 @@ ${currentAnalysis.extractedDetails.map(d => `• ${d.replace(/\*\*/g, '')}`).joi
 ${currentAnalysis.recommendedAction}
       `.trim();
 
-      const res = await fetch("/api/send-email", {
+      const res = await fetch("http://localhost:8085/api/send-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -415,7 +461,7 @@ ${analysis.recommendedAction}`;
 
       summaryBody += emailBlocks.join('\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n');
 
-      const res = await fetch("/api/send-email", {
+      const res = await fetch("http://localhost:8085/api/send-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -452,6 +498,7 @@ ${analysis.recommendedAction}`;
     if (emailFilter === "GOOD" && analysis.sentiment === "Positive") return true;
     if (emailFilter === "BAD" && (analysis.sentiment === "Negative" || analysis.category === "COMPLAINT")) return true;
     if (emailFilter === "SUPPORT" && (analysis.category === "INQUIRY" || analysis.sentiment === "Neutral")) return true;
+    if (emailFilter === "FOLLOWUP" && email.isFollowUp) return true;
     return false;
   });
 
@@ -581,16 +628,16 @@ ${analysis.recommendedAction}`;
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-[#F4F5F7] font-sans selection:bg-zinc-200 selection:text-zinc-900 text-zinc-900 relative p-4 lg:p-6">
 
       {/* Subtle Background */}
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-white via-[#F4F5F7] to-[#E5E7EB] -z-10"></div>
+      <div className="absolute inset-0 bg-gradient-to-br from-indigo-100 via-purple-50 to-teal-100 -z-10"></div>
 
       {/* Floating App Container */}
-      <div className="flex-1 w-full max-w-[1600px] mx-auto bg-white rounded-[2rem] shadow-[0_8px_40px_rgba(0,0,0,0.08)] border border-zinc-200 flex flex-col overflow-hidden relative z-10">
+      <div className="flex-1 w-full max-w-[1600px] mx-auto bg-white/70 backdrop-blur-3xl rounded-[2rem] shadow-[0_16px_60px_rgba(0,0,0,0.1)] border border-white flex flex-col overflow-hidden relative z-10">
 
         {/* Minimalist Top Header */}
-        <header className="h-16 px-6 flex items-center justify-between shrink-0 bg-white relative z-20 border-b border-zinc-100">
+        <header className="h-16 px-6 flex items-center justify-between shrink-0 bg-white/50 backdrop-blur-md relative z-20 border-b border-white/60">
           <div className="flex items-center gap-3 w-64">
-            <div className="w-8 h-8 rounded-xl bg-zinc-900 text-white flex items-center justify-center shadow-sm"><Mail className="w-4 h-4" /></div>
-            <span className="font-extrabold text-zinc-900 tracking-tight text-[15px]">AL Smart Mail</span>
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 text-white flex items-center justify-center shadow-md shadow-indigo-500/20"><Mail className="w-4 h-4" /></div>
+            <span className="font-extrabold text-zinc-900 tracking-tight text-[15px]">AL Support Desk</span>
           </div>
 
           <div className="flex-1 max-w-xl">
@@ -614,16 +661,24 @@ ${analysis.recommendedAction}`;
         <div className="flex flex-1 overflow-hidden relative z-0">
 
           {/* Translucent Left Sidebar */}
-          <aside className="w-64 flex flex-col bg-white/60 backdrop-blur-xl border-r border-white/80 pt-6 pb-6 shrink-0">
+          <aside className="w-64 flex flex-col bg-white/40 backdrop-blur-xl border-r border-white/60 pt-6 pb-6 shrink-0">
             <nav className="flex flex-col gap-2 px-4">
-              <button onClick={() => setSelectedEmail(null)} className="flex items-center justify-between px-4 py-3 rounded-2xl bg-white shadow-[0_2px_10px_rgba(0,0,0,0.06)] border border-white text-indigo-700 font-bold text-[14px] transition-all group">
-                <div className="flex items-center gap-3"><Inbox className="w-4 h-4 text-indigo-500" /> Inbox</div>
-                <span className="text-[11px] bg-indigo-50 text-indigo-700 font-black px-2.5 py-1 rounded-full">{emails.length}</span>
+              <button onClick={() => { setSelectedEmail(null); setEmailFilter("ALL"); }} className={`flex items-center justify-between px-4 py-3 rounded-2xl transition-all font-bold text-[14px] ${emailFilter === 'ALL' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.06)] border border-white text-indigo-700' : 'text-zinc-600 hover:bg-white/60 border border-transparent'}`}>
+                <div className="flex items-center gap-3"><Inbox className={`w-4 h-4 ${emailFilter === 'ALL' ? 'text-indigo-500' : ''}`} /> Primary</div>
+                <span className={`text-[11px] font-black px-2.5 py-1 rounded-full ${emailFilter === 'ALL' ? 'bg-indigo-50 text-indigo-700' : 'bg-black/5 text-zinc-500'}`}>{emails.length}</span>
               </button>
-              <button className="flex items-center gap-3 px-4 py-3 rounded-2xl text-left text-[14px] text-zinc-700 font-semibold hover:bg-white/80 hover:shadow-sm hover:text-zinc-900 transition-all opacity-70 cursor-not-allowed pointer-events-none"><Star className="w-4 h-4" /> Starred</button>
-              <button className="flex items-center gap-3 px-4 py-3 rounded-2xl text-left text-[14px] text-zinc-700 font-semibold hover:bg-white/80 hover:shadow-sm hover:text-zinc-900 transition-all opacity-70 cursor-not-allowed pointer-events-none"><Clock className="w-4 h-4" /> Snoozed</button>
-              <button className="flex items-center gap-3 px-4 py-3 rounded-2xl text-left text-[14px] text-zinc-700 font-semibold hover:bg-white/80 hover:shadow-sm hover:text-zinc-900 transition-all opacity-70 cursor-not-allowed pointer-events-none"><Send className="w-4 h-4" /> Sent</button>
-              <button className="flex items-center gap-3 px-4 py-3 rounded-2xl text-left text-[14px] text-zinc-700 font-semibold hover:bg-white/80 hover:shadow-sm hover:text-zinc-900 transition-all opacity-70 cursor-not-allowed pointer-events-none"><File className="w-4 h-4" /> Drafts</button>
+              <button onClick={() => { setSelectedEmail(null); setEmailFilter("GOOD"); }} className={`flex items-center justify-between px-4 py-3 rounded-2xl transition-all font-bold text-[14px] ${emailFilter === 'GOOD' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.06)] border border-white text-indigo-700' : 'text-zinc-600 hover:bg-white/60 border border-transparent'}`}>
+                <div className="flex items-center gap-3"><ThumbsUp className={`w-4 h-4 ${emailFilter === 'GOOD' ? 'text-indigo-500' : ''}`} /> Good Reviews</div>
+              </button>
+              <button onClick={() => { setSelectedEmail(null); setEmailFilter("BAD"); }} className={`flex items-center justify-between px-4 py-3 rounded-2xl transition-all font-bold text-[14px] ${emailFilter === 'BAD' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.06)] border border-white text-indigo-700' : 'text-zinc-600 hover:bg-white/60 border border-transparent'}`}>
+                <div className="flex items-center gap-3"><ThumbsDown className={`w-4 h-4 ${emailFilter === 'BAD' ? 'text-indigo-500' : ''}`} /> Bad Reviews</div>
+              </button>
+              <button onClick={() => { setSelectedEmail(null); setEmailFilter("SUPPORT"); }} className={`flex items-center justify-between px-4 py-3 rounded-2xl transition-all font-bold text-[14px] ${emailFilter === 'SUPPORT' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.06)] border border-white text-indigo-700' : 'text-zinc-600 hover:bg-white/60 border border-transparent'}`}>
+                <div className="flex items-center gap-3"><Headphones className={`w-4 h-4 ${emailFilter === 'SUPPORT' ? 'text-indigo-500' : ''}`} /> Support</div>
+              </button>
+              <button onClick={() => { setSelectedEmail(null); setEmailFilter("FOLLOWUP"); }} className={`flex items-center justify-between px-4 py-3 rounded-2xl transition-all font-bold text-[14px] ${emailFilter === 'FOLLOWUP' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.06)] border border-white text-indigo-700' : 'text-zinc-600 hover:bg-white/60 border border-transparent'}`}>
+                <div className="flex items-center gap-3"><Reply className={`w-4 h-4 ${emailFilter === 'FOLLOWUP' ? 'text-indigo-500' : ''}`} /> Follow-up</div>
+              </button>
             </nav>
 
             <div className="mt-auto px-4">
@@ -635,16 +690,16 @@ ${analysis.recommendedAction}`;
           </aside>
 
           {/* App Window */}
-          <main className="flex-1 bg-white/50 backdrop-blur-2xl flex flex-col overflow-hidden relative">
+          <main className="flex-1 bg-white/30 backdrop-blur-2xl flex flex-col overflow-hidden relative">
             {!selectedEmail ? (
 
               /* INBOX LIST VIEW */
               <div className="flex flex-col h-full overflow-hidden bg-transparent">
                 {/* Toolbar */}
-                <div className="h-16 px-6 border-b border-white/50 flex items-center gap-4 text-zinc-700 shrink-0 bg-white/50 backdrop-blur-xl relative z-10">
-                  <input type="checkbox" className="w-5 h-5 rounded-md border-black/10 accent-indigo-500 bg-white shadow-sm" />
-                  <button onClick={fetchEmails} className="p-2.5 bg-white hover:bg-zinc-50 border border-white rounded-xl transition text-zinc-700 shadow-[0_2px_8px_rgba(0,0,0,0.04)]" title="Refresh"><RefreshCw className={`w-4 h-4 ${loadingEmails ? 'animate-spin' : ''}`} /></button>
-                  <button className="p-2.5 bg-white hover:bg-zinc-50 border border-white rounded-xl transition text-zinc-700 shadow-[0_2px_8px_rgba(0,0,0,0.04)]"><MoreVertical className="w-4 h-4" /></button>
+                <div className="h-16 px-6 border-b border-zinc-200/50 flex items-center gap-4 text-zinc-700 shrink-0 bg-transparent backdrop-blur-xl relative z-10">
+                  <input type="checkbox" title="Select all" className="w-5 h-5 rounded-md border-black/10 accent-indigo-500 bg-white shadow-sm" />
+                  <button onClick={fetchEmails} className="p-2.5 bg-white hover:bg-zinc-50 border border-white rounded-xl transition text-zinc-700 shadow-[0_2px_8px_rgba(0,0,0,0.04)]" title="Sync"><RefreshCw className={`w-4 h-4 ${loadingEmails ? 'animate-spin' : ''}`} /></button>
+                  <button className="p-2.5 bg-white hover:bg-zinc-50 border border-white rounded-xl transition text-zinc-700 shadow-[0_2px_8px_rgba(0,0,0,0.04)]" title="More options"><MoreVertical className="w-4 h-4" /></button>
 
                   <div className="h-5 w-px bg-zinc-300/50 mx-2"></div>
 
@@ -668,25 +723,11 @@ ${analysis.recommendedAction}`;
 
                   <div className="flex-1"></div>
                   <span className="text-[13px] font-extrabold text-zinc-500">1-{filteredEmails.length} of {filteredEmails.length}</span>
-                  <button className="p-2.5 bg-white hover:bg-zinc-50 border border-white rounded-xl transition text-zinc-700 shadow-[0_2px_8px_rgba(0,0,0,0.04)]"><ChevronLeft className="w-4 h-4" /></button>
-                  <button className="p-2.5 bg-white hover:bg-zinc-50 border border-white rounded-xl transition text-zinc-700 shadow-[0_2px_8px_rgba(0,0,0,0.04)]"><ChevronRight className="w-4 h-4" /></button>
+                  <button className="p-2.5 bg-white hover:bg-zinc-50 border border-white rounded-xl transition text-zinc-700 shadow-[0_2px_8px_rgba(0,0,0,0.04)]" title="Previous page"><ChevronLeft className="w-4 h-4" /></button>
+                  <button className="p-2.5 bg-white hover:bg-zinc-50 border border-white rounded-xl transition text-zinc-700 shadow-[0_2px_8px_rgba(0,0,0,0.04)]" title="Next page"><ChevronRight className="w-4 h-4" /></button>
                 </div>
 
-                {/* Tabs */}
-                <div className="flex border-b border-white/50 px-6 shrink-0 bg-white/40 backdrop-blur-md">
-                  <button onClick={() => setEmailFilter("ALL")} className={`flex items-center gap-2 px-5 py-4 font-bold text-[13px] border-b-[3px] transition-colors ${emailFilter === 'ALL' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-zinc-500 hover:text-zinc-800 hover:bg-white/60'}`}>
-                    <Inbox className="w-4 h-4" /> Primary
-                  </button>
-                  <button onClick={() => setEmailFilter("GOOD")} className={`flex items-center gap-2 px-5 py-4 font-bold text-[13px] border-b-[3px] transition-colors ${emailFilter === 'GOOD' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-zinc-500 hover:text-zinc-800 hover:bg-white/60'}`}>
-                    <Star className="w-4 h-4" /> Good Reviews
-                  </button>
-                  <button onClick={() => setEmailFilter("BAD")} className={`flex items-center gap-2 px-5 py-4 font-bold text-[13px] border-b-[3px] transition-colors ${emailFilter === 'BAD' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-zinc-500 hover:text-zinc-800 hover:bg-white/60'}`}>
-                    <AlertCircle className="w-4 h-4" /> Bad Reviews
-                  </button>
-                  <button onClick={() => setEmailFilter("SUPPORT")} className={`flex items-center gap-2 px-5 py-4 font-bold text-[13px] border-b-[3px] transition-colors ${emailFilter === 'SUPPORT' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-zinc-500 hover:text-zinc-800 hover:bg-white/60'}`}>
-                    <Info className="w-4 h-4" /> Support
-                  </button>
-                </div>
+
 
                 {/* List */}
                 <div className="flex-1 overflow-y-auto p-4 space-y-2">
@@ -697,7 +738,7 @@ ${analysis.recommendedAction}`;
                     </div>
                   ) : (
                     filteredEmails.map(email => (
-                      <div key={email.id} onClick={() => handleSelectEmail(email)} className="flex items-center gap-4 px-6 py-4 bg-white/70 hover:bg-white border border-white shadow-[0_2px_10px_rgba(0,0,0,0.02)] hover:shadow-md cursor-pointer group text-[14px] relative transition-all rounded-2xl">
+                      <div key={email.id} onClick={() => handleSelectEmail(email)} className="flex items-center gap-4 px-6 py-4 bg-white hover:bg-white border border-transparent hover:border-indigo-100 shadow-sm hover:shadow-md cursor-pointer group text-[14px] relative transition-all rounded-2xl">
                         <div className="flex items-center gap-3 text-zinc-400 group-hover:text-zinc-500 shrink-0">
                           <input type="checkbox" className="w-5 h-5 rounded-md border-zinc-300 bg-white accent-indigo-600 shadow-sm" onClick={e => e.stopPropagation()} />
                           <Star className="w-5 h-5 hover:text-amber-400 transition-colors" />
@@ -709,6 +750,11 @@ ${analysis.recommendedAction}`;
                           <span className="font-extrabold text-zinc-900 mr-3 truncate tracking-tight text-[15px]">{email.subject}</span>
                           {analysisMap[email.id] && (
                             <div className="flex items-center gap-2 shrink-0 ml-auto">
+                              {email.isFollowUp && (
+                                <span className="px-2.5 py-1 rounded-full text-[10px] font-bold capitalize bg-purple-50 text-purple-600 border border-purple-300 shrink-0">
+                                  follow-up
+                                </span>
+                              )}
                               <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold capitalize ${getCategoryColor(analysisMap[email.id])}`}>
                                 {analysisMap[email.id]?.category.toLowerCase()}
                               </span>
@@ -718,11 +764,21 @@ ${analysis.recommendedAction}`;
                                   {analysisMap[email.id]?.priority} priority
                                 </span>
                               )}
+                              {(() => {
+                                const tatInfo = getTATInfo(email.receivedTimestamp);
+                                if (!tatInfo) return null;
+                                return (
+                                  <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold flex items-center gap-1.5 shrink-0 bg-transparent ${tatInfo.isBreached ? 'text-rose-600 border border-rose-500 bg-rose-50' : 'text-slate-600 border border-slate-300'}`}>
+                                    <Clock className="w-3 h-3" />
+                                    {tatInfo.isBreached ? 'TAT BREACHED' : `TAT: ${tatInfo.label}`}
+                                  </span>
+                                );
+                              })()}
                             </div>
                           )}
                         </div>
                         <div className="w-24 text-right font-bold text-zinc-500 text-[13px] shrink-0">
-                          {email.time}
+                          {formatDisplayTime(email.receivedTimestamp, email.time)}
                         </div>
                       </div>
                     ))
@@ -765,9 +821,9 @@ ${analysis.recommendedAction}`;
                             </div>
                           </div>
                           <div className="text-right">
-                            <div className="text-[14px] font-extrabold text-zinc-700">{selectedEmail.time}</div>
+                            <div className="text-[14px] font-extrabold text-zinc-700">{formatDisplayTime(selectedEmail.receivedTimestamp, selectedEmail.time)}</div>
                             <div className="text-[12px] text-zinc-400 mt-0.5 font-bold uppercase tracking-widest">
-                              {tatStartMap[selectedEmail.id] ? `Waiting: ${Math.floor((Date.now() - tatStartMap[selectedEmail.id]) / 60000)} min` : "to me"}
+                              to me
                             </div>
                           </div>
                         </div>
@@ -801,15 +857,30 @@ ${analysis.recommendedAction}`;
                       <div className="flex-1 overflow-y-auto p-8 space-y-6">
 
                         {/* Tags */}
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap gap-2">
+                          {selectedEmail.isFollowUp && (
+                            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold capitalize border shrink-0 bg-purple-50 text-purple-600 border-purple-300">
+                              follow-up
+                            </span>
+                          )}
                           <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold capitalize border shrink-0 ${currentAnalysis.sentiment === 'Positive' ? 'bg-transparent text-emerald-600 border-emerald-300' : currentAnalysis.sentiment === 'Negative' ? 'bg-transparent text-rose-600 border-rose-300' : 'bg-transparent text-zinc-600 border-zinc-300'}`}>{currentAnalysis.sentiment.toLowerCase()}</span>
-                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold capitalize truncate max-w-[200px] ${getCategoryColor(currentAnalysis)}`}>{currentAnalysis.category.toLowerCase()}</span>
+                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold capitalize shrink-0 ${getCategoryColor(currentAnalysis)}`}>{currentAnalysis.category.toLowerCase()}</span>
                           {currentAnalysis.priority && (
                             <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold flex items-center gap-1.5 shrink-0 bg-transparent text-zinc-800 ${currentAnalysis.priority === 'High' ? 'border border-red-400/80' : currentAnalysis.priority === 'Medium' ? 'border border-amber-500/80' : 'border border-green-500/80'}`}>
                               <Flag className={`w-3 h-3 ${currentAnalysis.priority === 'High' ? 'text-red-500 fill-red-500' : currentAnalysis.priority === 'Medium' ? 'text-amber-500 fill-amber-500' : 'text-green-500 fill-green-500'}`} />
                               {currentAnalysis.priority} priority
                             </span>
                           )}
+                          {(() => {
+                            const tatInfo = getTATInfo(selectedEmail.receivedTimestamp);
+                            if (!tatInfo) return null;
+                            return (
+                              <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold flex items-center gap-1.5 shrink-0 bg-transparent ${tatInfo.isBreached ? 'text-rose-600 border border-rose-500 bg-rose-50' : 'text-slate-600 border border-slate-300'}`}>
+                                <Clock className="w-3 h-3" />
+                                {tatInfo.isBreached ? 'TAT BREACHED' : `TAT: ${tatInfo.label}`}
+                              </span>
+                            );
+                          })()}
                         </div>
 
                         {/* Insights Card */}
