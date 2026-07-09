@@ -10,8 +10,9 @@ import {
 } from "lucide-react";
 
 // Types
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://al-mcp-mail-service-worker.abstractworldknowledge.workers.dev';
 type Email = {
-  id: string; threadId?: string; sender: string; name: string; subject: string; time: string; content: string; receivedTimestamp?: number; isFollowUp?: boolean;
+  id: string; threadId?: string; sender: string; name: string; subject: string; time: string; content: string; receivedTimestamp?: number; isFollowUp?: boolean; isUnread?: boolean; analysis?: Analysis;
 };
 type Analysis = {
   sentiment: "Positive" | "Negative" | "Neutral"; category: string; priority: "High" | "Medium" | "Low"; confidenceScore: number; recommendedAction: string; extractedDetails: string[]; draftedReply: string;
@@ -88,7 +89,7 @@ export default function SupportDesk() {
   const [autoPilotProgress, setAutoPilotProgress] = useState({ current: 0, total: 0 });
 
   const [toast, setToast] = useState<{ message: string, type: "success" | "error" | "info" } | null>(null);
-  const [emailFilter, setEmailFilter] = useState<"ALL" | "GOOD" | "BAD" | "SUPPORT" | "FOLLOWUP">("ALL");
+  const [emailFilter, setEmailFilter] = useState<"ALL" | "GOOD" | "BAD" | "SUPPORT" | "FOLLOWUP" | "HIGH_PRIORITY" | "TAT_BREACHED">("ALL");
 
   const showToast = (message: string, type: "success" | "error" | "info" = "info") => {
     setToast({ message, type });
@@ -128,11 +129,11 @@ ${analysis.extractedDetails.map(d => `• ${d.replace(/\*\*/g, '')}`).join('\n')
 ${analysis.recommendedAction}
       `.trim();
 
-      await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8085'}/api/send-email`, {
+      await fetch(`${API_URL}/api/send-email`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          to: "gaurav.p@abstractlayers.com",
+          to: "pratik.poojari@abstractlayers.com",
           subject: `Summary Report: ${email.subject}`,
           body: summaryBody,
           mode,
@@ -146,7 +147,7 @@ ${analysis.recommendedAction}
 
   const logTransaction = async (email: Email, analysis: Analysis) => {
     try {
-      await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8085'}/api/transactions`, {
+      await fetch(`${API_URL}/api/transactions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -158,9 +159,7 @@ ${analysis.recommendedAction}
           sentiment: analysis.sentiment,
           priority: analysis.priority,
           receivedTime: email.time,
-          repliedTime: new Date().toLocaleString(),
-          tatSeconds: email.receivedTimestamp ? Math.floor((Date.now() - email.receivedTimestamp) / 1000) : 0,
-          status: "REPLIED"
+          status: "ANALYZED"
         })
       });
     } catch (e) {
@@ -170,7 +169,13 @@ ${analysis.recommendedAction}
 
   const autoAnalyzeEmails = async (targetEmails: Email[], showPrompt = false) => {
     // For demo purposes, limit the automatic analysis to the first 5 emails
-    const emailsToAnalyze = targetEmails.slice(0, 5);
+    const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+    const emailsToAnalyze = targetEmails.filter(e =>
+      e.isUnread &&
+      (e.receivedTimestamp || 0) > oneDayAgo &&
+      !e.analysis &&
+      !analysisMap[e.id]
+    ).slice(0, 5);
 
     if (emailsToAnalyze.length === 0) return;
     if (showPrompt && !confirm(`Are you sure you want to automatically analyze ${emailsToAnalyze.length} emails?`)) return;
@@ -184,6 +189,7 @@ ${analysis.recommendedAction}
       const email = emailsToAnalyze[i];
       setAutoPilotProgress({ current: i + 1, total: emailsToAnalyze.length });
 
+      if (email.analysis) continue;
       let alreadyAnalyzed = false;
       setAnalysisMap(prev => {
         if (prev[email.id]) alreadyAnalyzed = true;
@@ -194,18 +200,25 @@ ${analysis.recommendedAction}
       try {
         setAnalyzingMap(prev => ({ ...prev, [email.id]: true }));
         const emailContext = `From: ${email.name} <${email.sender}>\nSubject: ${email.subject}\n\n${email.content}`;
-        const analyzeRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8085'}/api/analyze`, {
+        const analyzeRes = await fetch(`${API_URL}/api/analyze`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ emailContext })
+          body: JSON.stringify({
+            emailContext,
+            emailId: email.id,
+            threadId: email.threadId,
+            sender: email.sender,
+            subject: email.subject,
+            receivedTime: email.time
+          })
         });
         if (!analyzeRes.ok) continue;
         const analysis: Analysis = await analyzeRes.json();
         setAnalysisMap(prev => ({ ...prev, [email.id]: analysis }));
         setDraftContentMap(prev => ({ ...prev, [email.id]: analysis.draftedReply }));
         setTatStartMap(prev => ({ ...prev, [email.id]: Date.now() }));
-
         newlyAnalyzed.push({ email, analysis });
+        sendSummaryToStakeholder(email, analysis);
         logTransaction(email, analysis);
       } catch (err) {
         console.error(err);
@@ -216,47 +229,13 @@ ${analysis.recommendedAction}
     }
 
     setIsAutoPiloting(false);
-
-    if (newlyAnalyzed.length > 0) {
-      let summaryBody = `📋 AUTOMATED BATCH EMAIL SUMMARY REPORT\n`;
-      summaryBody += `Total New Emails Analyzed: ${newlyAnalyzed.length}\n`;
-      summaryBody += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-
-      const emailBlocks = newlyAnalyzed.map(({ email, analysis }, index) => {
-        return `📧 EMAIL #${index + 1}
-📌 TITLE: ${email.subject}
-👤 FROM: ${email.name} <${email.sender}>
-🏷️ CATEGORY: ${analysis.category}
-🎭 SENTIMENT: ${analysis.sentiment}
-🚨 PRIORITY: ${analysis.priority}
-
-💡 SUMMARY & DETAILS:
-${analysis.extractedDetails.map(d => `• ${d.replace(/\*\*/g, '')}`).join('\n')}
-
-🚀 RECOMMENDED ACTION:
-${analysis.recommendedAction}`;
-      });
-
-      summaryBody += emailBlocks.join('\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n');
-
-      fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8085'}/api/send-email`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          to: "gaurav.p@abstractlayers.com",
-          subject: `Automated Sync Report (${newlyAnalyzed.length} new emails)`,
-          body: summaryBody.trim(),
-          mode
-        })
-      }).catch(e => console.error("Failed to send batched auto-summary", e));
-    }
   };
 
   const fetchEmails = async () => {
     if (!isLoggedIn) return;
     setLoadingEmails(true);
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8085'}/api/fetch-emails`, {
+      const res = await fetch(`${API_URL}/api/fetch-emails`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode, accountId: activeAccount })
@@ -264,6 +243,16 @@ ${analysis.recommendedAction}`;
       const data = await res.json();
       if (res.ok && data.emails) {
         setEmails(data.emails);
+        const newAnalysisMap: Record<string, Analysis> = {};
+        const newDraftMap: Record<string, string> = {};
+        data.emails.forEach((email: any) => {
+          if (email.analysis) {
+            newAnalysisMap[email.id] = email.analysis;
+            newDraftMap[email.id] = email.analysis.draftedReply;
+          }
+        });
+        setAnalysisMap(prev => ({ ...prev, ...newAnalysisMap }));
+        setDraftContentMap(prev => ({ ...prev, ...newDraftMap }));
         // Automatically start analyzing the newly fetched emails in the background
         autoAnalyzeEmails(data.emails, false);
       } else {
@@ -296,10 +285,17 @@ ${analysis.recommendedAction}`;
     setAnalyzingMap(prev => ({ ...prev, [email.id]: true }));
     try {
       const emailContext = `From: ${email.name} <${email.sender}>\nSubject: ${email.subject}\n\n${email.content}`;
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8085'}/api/analyze`, {
+      const res = await fetch(`${API_URL}/api/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ emailContext })
+        body: JSON.stringify({
+          emailContext,
+          emailId: email.id,
+          threadId: email.threadId,
+          sender: email.sender,
+          subject: email.subject,
+          receivedTime: email.time
+        })
       });
       const analysis: Analysis = await res.json();
       if (res.ok) {
@@ -324,7 +320,7 @@ ${analysis.recommendedAction}`;
     const currentDraft = draftContentMap[selectedEmail.id] || currentAnalysis.draftedReply;
     setIsRefiningMap(prev => ({ ...prev, [selectedEmail.id]: true }));
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8085'}/api/refine-draft`, {
+      const res = await fetch(`${API_URL}/api/refine-draft`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -352,7 +348,7 @@ ${analysis.recommendedAction}`;
     if (!selectedEmail || !currentAnalysis) return;
     setSendingState(prev => ({ ...prev, [selectedEmail.id]: true }));
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8085'}/api/send-email`, {
+      const res = await fetch(`${API_URL}/api/send-email`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -369,13 +365,13 @@ ${analysis.recommendedAction}`;
         showToast("Email sent successfully!", "success");
 
         const tatSeconds = tatStartMap[selectedEmail.id] ? Math.floor((Date.now() - tatStartMap[selectedEmail.id]) / 1000) : 0;
-        fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8085'}/api/transactions`, {
+        fetch(`${API_URL}/api/transactions/${selectedEmail.id}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             id: selectedEmail.id,
-            replied_time: new Date().toISOString(),
-            tat_seconds: tatSeconds,
+            repliedTime: new Date().toISOString(),
+            tatSeconds: tatSeconds,
             status: "REPLIED"
           })
         }).catch(e => console.error("Failed to update TAT", e));
@@ -411,11 +407,11 @@ ${currentAnalysis.extractedDetails.map(d => `• ${d.replace(/\*\*/g, '')}`).joi
 ${currentAnalysis.recommendedAction}
       `.trim();
 
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8085'}/api/send-email`, {
+      const res = await fetch(`${API_URL}/api/send-email`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          to: "gaurav.p@abstractlayers.com",
+          to: "pratik.poojari@abstractlayers.com",
           subject: `Summary Report: ${selectedEmail.subject}`,
           body: summaryBody,
           mode,
@@ -467,11 +463,11 @@ ${analysis.recommendedAction}`;
 
       summaryBody += emailBlocks.join('\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n');
 
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8085'}/api/send-email`, {
+      const res = await fetch(`${API_URL}/api/send-email`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          to: "gaurav.p@abstractlayers.com",
+          to: "pratik.poojari@abstractlayers.com",
           subject: `Global Support Desk Report (${analyzedEmails.length} emails)`,
           body: summaryBody.trim(),
           mode
@@ -498,6 +494,11 @@ ${analysis.recommendedAction}`;
 
   const filteredEmails = emails.filter(email => {
     if (emailFilter === "ALL") return true;
+    if (emailFilter === "TAT_BREACHED") {
+      const tatInfo = getTATInfo(email.receivedTimestamp);
+      return tatInfo ? tatInfo.isBreached : false;
+    }
+
     const analysis = analysisMap[email.id];
     if (!analysis) return false;
 
@@ -505,6 +506,7 @@ ${analysis.recommendedAction}`;
     if (emailFilter === "BAD" && (analysis.sentiment === "Negative" || analysis.category === "COMPLAINT")) return true;
     if (emailFilter === "SUPPORT" && (analysis.category === "INQUIRY" || analysis.sentiment === "Neutral")) return true;
     if (emailFilter === "FOLLOWUP" && email.isFollowUp) return true;
+    if (emailFilter === "HIGH_PRIORITY" && analysis.priority === "High") return true;
     return false;
   });
 
@@ -632,7 +634,7 @@ ${analysis.recommendedAction}`;
 
 
   const accounts = [
-    { id: "default", email: "test.al123345@gmail.com", name: "Test Account", initials: "TA", gradient: "from-indigo-500 to-purple-600" }
+    { id: "default", email: "abstractworldknowledge@gmail.com", name: "Abstract World", initials: "AW", gradient: "from-indigo-500 to-purple-600" }
   ];
 
   const currentAcc = accounts.find(a => a.id === activeAccount) || accounts[0];
@@ -641,7 +643,7 @@ ${analysis.recommendedAction}`;
     return (
       <div className="h-screen w-screen flex flex-col items-center justify-center bg-[#F4F5F7] font-sans relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-br from-indigo-100/80 via-purple-50/80 to-teal-100/80 -z-10"></div>
-        
+
         <div className="bg-white/70 backdrop-blur-3xl rounded-[2.5rem] shadow-[0_20px_80px_rgba(0,0,0,0.08)] border border-white p-12 max-w-2xl w-full mx-4 flex flex-col items-center text-center relative z-10">
           <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 text-white flex items-center justify-center shadow-lg shadow-indigo-500/25 mb-8">
             <Mail className="w-8 h-8" />
@@ -659,7 +661,7 @@ ${analysis.recommendedAction}`;
                 <p className="text-[13px] text-zinc-500 font-medium truncate">{accounts[0].email}</p>
               </div>
             </div>
-            
+
             <button
               onClick={() => { setActiveAccount(accounts[0].id); setIsLoggedIn(true); }}
               className="w-full bg-zinc-900 hover:bg-zinc-800 text-white font-extrabold py-4 rounded-2xl flex items-center justify-center gap-2 text-[14px] uppercase tracking-widest transition-all shadow-lg shadow-zinc-900/20"
@@ -716,16 +718,22 @@ ${analysis.recommendedAction}`;
                 <span className={`text-[11px] font-black px-2.5 py-1 rounded-full ${emailFilter === 'ALL' ? 'bg-indigo-50 text-indigo-700' : 'bg-black/5 text-zinc-500'}`}>{emails.length}</span>
               </button>
               <button onClick={() => { setSelectedEmail(null); setEmailFilter("GOOD"); }} className={`flex items-center justify-between px-4 py-3 rounded-2xl transition-all font-bold text-[14px] ${emailFilter === 'GOOD' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.06)] border border-white text-indigo-700' : 'text-zinc-600 hover:bg-white/60 border border-transparent'}`}>
-                <div className="flex items-center gap-3"><ThumbsUp className={`w-4 h-4 ${emailFilter === 'GOOD' ? 'text-indigo-500' : ''}`} /> Good Reviews</div>
+                <div className="flex items-center gap-3"><ThumbsUp className={`w-4 h-4 ${emailFilter === 'GOOD' ? 'text-indigo-500' : ''}`} /> Positive Feedback</div>
               </button>
               <button onClick={() => { setSelectedEmail(null); setEmailFilter("BAD"); }} className={`flex items-center justify-between px-4 py-3 rounded-2xl transition-all font-bold text-[14px] ${emailFilter === 'BAD' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.06)] border border-white text-indigo-700' : 'text-zinc-600 hover:bg-white/60 border border-transparent'}`}>
-                <div className="flex items-center gap-3"><ThumbsDown className={`w-4 h-4 ${emailFilter === 'BAD' ? 'text-indigo-500' : ''}`} /> Bad Reviews</div>
+                <div className="flex items-center gap-3"><ThumbsDown className={`w-4 h-4 ${emailFilter === 'BAD' ? 'text-indigo-500' : ''}`} /> Escalated Feedback</div>
               </button>
               <button onClick={() => { setSelectedEmail(null); setEmailFilter("SUPPORT"); }} className={`flex items-center justify-between px-4 py-3 rounded-2xl transition-all font-bold text-[14px] ${emailFilter === 'SUPPORT' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.06)] border border-white text-indigo-700' : 'text-zinc-600 hover:bg-white/60 border border-transparent'}`}>
                 <div className="flex items-center gap-3"><Headphones className={`w-4 h-4 ${emailFilter === 'SUPPORT' ? 'text-indigo-500' : ''}`} /> Support</div>
               </button>
               <button onClick={() => { setSelectedEmail(null); setEmailFilter("FOLLOWUP"); }} className={`flex items-center justify-between px-4 py-3 rounded-2xl transition-all font-bold text-[14px] ${emailFilter === 'FOLLOWUP' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.06)] border border-white text-indigo-700' : 'text-zinc-600 hover:bg-white/60 border border-transparent'}`}>
                 <div className="flex items-center gap-3"><Reply className={`w-4 h-4 ${emailFilter === 'FOLLOWUP' ? 'text-indigo-500' : ''}`} /> Follow-up</div>
+              </button>
+              <button onClick={() => { setSelectedEmail(null); setEmailFilter("HIGH_PRIORITY"); }} className={`flex items-center justify-between px-4 py-3 rounded-2xl transition-all font-bold text-[14px] ${emailFilter === 'HIGH_PRIORITY' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.06)] border border-white text-indigo-700' : 'text-zinc-600 hover:bg-white/60 border border-transparent'}`}>
+                <div className="flex items-center gap-3"><AlertCircle className={`w-4 h-4 ${emailFilter === 'HIGH_PRIORITY' ? 'text-red-500' : ''}`} /> High Priority</div>
+              </button>
+              <button onClick={() => { setSelectedEmail(null); setEmailFilter("TAT_BREACHED"); }} className={`flex items-center justify-between px-4 py-3 rounded-2xl transition-all font-bold text-[14px] ${emailFilter === 'TAT_BREACHED' ? 'bg-white shadow-[0_2px_10px_rgba(0,0,0,0.06)] border border-white text-indigo-700' : 'text-zinc-600 hover:bg-white/60 border border-transparent'}`}>
+                <div className="flex items-center gap-3"><Clock className={`w-4 h-4 ${emailFilter === 'TAT_BREACHED' ? 'text-amber-500' : ''}`} /> TAT Breached</div>
               </button>
             </nav>
 
@@ -735,16 +743,15 @@ ${analysis.recommendedAction}`;
               <div className="bg-zinc-50 rounded-[20px] p-4 flex flex-col gap-2 border border-zinc-100 shadow-sm mb-3">
                 <h3 className="text-[11px] font-extrabold uppercase tracking-widest text-zinc-500 mb-1">Gmail Account</h3>
                 {([
-                  { id: "default", email: "test.al123345@gmail.com", initials: "TA", gradient: "from-indigo-400 to-purple-500" }
+                  { id: "default", email: "abstractworldknowledge@gmail.com", initials: "AW", gradient: "from-indigo-400 to-purple-500" }
                 ] as { id: string; email: string; initials: string; gradient: string }[]).map(acc => (
                   <button
                     key={acc.id}
                     onClick={() => { setActiveAccount(acc.id); setSelectedEmail(null); setEmails([]); setAnalysisMap({}); }}
-                    className={`text-left py-2.5 px-3 rounded-xl flex items-center gap-2.5 transition font-bold ${
-                      activeAccount === acc.id
+                    className={`text-left py-2.5 px-3 rounded-xl flex items-center gap-2.5 transition font-bold ${activeAccount === acc.id
                         ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/25"
                         : "bg-white hover:bg-zinc-50 text-zinc-700 shadow-sm border border-zinc-200"
-                    }`}
+                      }`}
                   >
                     <div className={`w-6 h-6 rounded-full bg-gradient-to-br ${acc.gradient} flex items-center justify-center text-white text-[9px] font-black shrink-0`}>{acc.initials}</div>
                     <span className="text-[11px] truncate">{acc.email}</span>
@@ -816,6 +823,11 @@ ${analysis.recommendedAction}`;
                         <div className="flex items-center gap-3 text-zinc-400 group-hover:text-zinc-500 shrink-0">
                           <input type="checkbox" className="w-5 h-5 rounded-md border-zinc-300 bg-white accent-indigo-600 shadow-sm" onClick={e => e.stopPropagation()} />
                           <Star className="w-5 h-5 hover:text-amber-400 transition-colors" />
+                          {analysisMap[email.id] && (
+                            <span title="Analyzed by AI">
+                              <CheckCircle2 className="w-5 h-5 text-emerald-500 fill-emerald-50" />
+                            </span>
+                          )}
                         </div>
                         <div className="w-56 font-bold text-zinc-900 truncate tracking-tight text-[15px]">
                           {email.name}
